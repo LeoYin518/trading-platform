@@ -8,6 +8,10 @@
 
 ```env
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres_db
+DATABASE_MAX_CONNECTIONS=5
+APP_HOST=127.0.0.1
+APP_PORT=3000
+LOG_LEVEL=debug
 ```
 
 2. 初始化数据库表和测试数据：
@@ -27,6 +31,16 @@ psql $env:DATABASE_URL -f db/init.sql
 ```bash
 cargo run
 ```
+
+运行期配置集中在 `src/config.rs`：
+
+- `DATABASE_URL`：必填，Postgres 连接字符串。
+- `DATABASE_MAX_CONNECTIONS`：可选，数据库连接池最大连接数，默认 `5`。
+- `APP_HOST`：可选，HTTP 服务监听地址，默认 `127.0.0.1`。
+- `APP_PORT`：可选，HTTP 服务监听端口，默认 `3000`。
+- `LOG_LEVEL`：可选，日志级别，默认 `debug`，支持 `trace`、`debug`、`info`、`warn`、`error`。
+
+订单手续费、状态流转、角色校验属于业务规则，保留在订单业务层，不通过环境变量配置。
 
 服务默认监听 `127.0.0.1:3000`。
 

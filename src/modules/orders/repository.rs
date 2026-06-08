@@ -76,10 +76,9 @@ pub async fn find_order_by_id_for_update(
 pub async fn create_order(
     tx: &mut Transaction<'_, Postgres>,
     request: &CreateOrderRequest,
+    fee_amount: i64,
+    worker_amount: i64,
 ) -> Result<Order, sqlx::Error> {
-    let fee_amount = request.amount / 10;
-    let worker_amount = request.amount - fee_amount;
-
     let order = sqlx::query_as::<_, OrderRow>(
         r#"
         INSERT INTO orders (client_id, worker_id, amount, fee_amount, worker_amount, description, status)

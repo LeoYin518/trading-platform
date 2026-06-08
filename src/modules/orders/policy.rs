@@ -3,8 +3,15 @@ use crate::modules::orders::model::OrderStatus;
 use crate::modules::orders::model::dto::CreateOrderRequest;
 use crate::modules::users::model::UserRole;
 
+const PLATFORM_FEE_DIVISOR: i64 = 10;
+
+pub(super) struct OrderAmountBreakdown {
+    pub fee_amount: i64,
+    pub worker_amount: i64,
+}
+
 pub(super) fn validate_create_order_request(request: &CreateOrderRequest) -> Result<(), AppError> {
-    calculate_fee(request.amount)?;
+    calculate_order_amounts(request.amount)?;
     if request.client_id == request.worker_id {
         return Err(AppError::BadRequest(
             "需求方和服务方不能是同一个用户".to_string(),
@@ -93,12 +100,17 @@ pub(super) fn ensure_pending_cancel_operator(
     Ok(())
 }
 
-pub(super) fn calculate_fee(amount: i64) -> Result<i64, AppError> {
+pub(super) fn calculate_order_amounts(amount: i64) -> Result<OrderAmountBreakdown, AppError> {
     if amount <= 0 {
         return Err(AppError::BadRequest("订单金额必须大于0".to_string()));
     }
 
-    Ok(amount / 10)
+    let fee_amount = amount / PLATFORM_FEE_DIVISOR;
+
+    Ok(OrderAmountBreakdown {
+        fee_amount,
+        worker_amount: amount - fee_amount,
+    })
 }
 
 pub(super) fn parse_target_status(target_status: &str) -> Result<OrderStatus, AppError> {
@@ -129,15 +141,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn calculate_fee_rounds_down() {
-        assert_eq!(calculate_fee(333).unwrap(), 33);
-        assert_eq!(calculate_fee(10_000).unwrap(), 1_000);
+    fn calculate_order_amounts_rounds_fee_down() {
+        let small_order = calculate_order_amounts(333).unwrap();
+        assert_eq!(small_order.fee_amount, 33);
+        assert_eq!(small_order.worker_amount, 300);
+
+        let regular_order = calculate_order_amounts(10_000).unwrap();
+        assert_eq!(regular_order.fee_amount, 1_000);
+        assert_eq!(regular_order.worker_amount, 9_000);
     }
 
     #[test]
-    fn calculate_fee_rejects_non_positive_amount() {
-        assert!(calculate_fee(0).is_err());
-        assert!(calculate_fee(-1).is_err());
+    fn calculate_order_amounts_rejects_non_positive_amount() {
+        assert!(calculate_order_amounts(0).is_err());
+        assert!(calculate_order_amounts(-1).is_err());
     }
 
     #[test]

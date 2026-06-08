@@ -1,8 +1,8 @@
-pub mod handler;
+mod handler;
 pub mod model;
 mod policy;
-pub mod repository;
-pub mod service;
+mod repository;
+mod service;
 
 use crate::router::AppState;
 use axum::{

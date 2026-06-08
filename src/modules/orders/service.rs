@@ -17,6 +17,7 @@ impl OrderService {
 
     pub async fn create_order(&self, request: CreateOrderRequest) -> Result<Order, AppError> {
         policy::validate_create_order_request(&request)?;
+        let amounts = policy::calculate_order_amounts(request.amount)?;
 
         let mut tx = self.pool.begin().await?;
         let client = users_repository::find_user_by_id_for_update(&mut tx, request.client_id)
@@ -30,7 +31,9 @@ impl OrderService {
         policy::ensure_worker_role(worker.role)?;
         policy::ensure_sufficient_available_balance(client.balance, request.amount)?;
 
-        let order = repository::create_order(&mut tx, &request).await?;
+        let order =
+            repository::create_order(&mut tx, &request, amounts.fee_amount, amounts.worker_amount)
+                .await?;
         tx.commit().await?;
 
         Ok(order)
