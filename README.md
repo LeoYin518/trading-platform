@@ -59,11 +59,11 @@ src/
 
 ### 1. 准备 PostgreSQL
 
-创建一个 PostgreSQL 数据库，例如：
-
+Docker （推荐）
 ```bash
-createdb postgres_db
+docker run --name trading-postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
 ```
+用户名和密码默认为 `postgres`
 
 ### 2. 配置环境变量
 
