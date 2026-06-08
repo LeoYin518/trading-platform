@@ -1,6 +1,8 @@
 use crate::common::ok;
 use crate::errors::AppError;
-use crate::modules::orders::model::dto::{CreateOrderRequest, OrderResponse, UpdateOrderStatusRequest};
+use crate::modules::orders::model::dto::{
+    CreateOrderRequest, OrderResponse, UpdateOrderStatusRequest,
+};
 use crate::router::AppState;
 use axum::{Json, extract::Path, extract::State, response::IntoResponse};
 

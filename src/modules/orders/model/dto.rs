@@ -11,7 +11,7 @@ pub struct CreateOrderRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateOrderStatusRequest {
-    pub target_status: OrderStatus,
+    pub target_status: String,
     pub operator_id: i64,
 }
 
@@ -39,5 +39,18 @@ impl From<Order> for OrderResponse {
             description: order.description,
             status: order.status,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_order_status_request_accepts_raw_target_status_for_service_validation() {
+        let request: UpdateOrderStatusRequest =
+            serde_json::from_str(r#"{"target_status":"abc","operator_id":1}"#).unwrap();
+
+        assert_eq!(request.target_status, "abc");
     }
 }
