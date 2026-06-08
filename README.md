@@ -1,12 +1,76 @@
 # Trading Platform
 
-一句话架构设计：项目采用 Axum + sqlx 分层架构，将 HTTP 路由、请求处理、业务服务、数据库访问、DTO、模型、错误与统一响应拆分，核心订单状态流转和资金结算全部在服务层事务内完成。
+一个基于 Axum 和 PostgreSQL 的订单流转示例项目，覆盖需求方创建订单、服务方接单、需求方确认完成、资金冻结和平台手续费记录。
+
+架构设计：项目按 `router -> handler -> service -> policy/repository -> model` 分层，HTTP 入口、业务编排、规则校验和数据库访问分别放在独立模块中。
+
+## 功能范围
+
+当前实现两个订单接口：
+
+- `POST /orders`：创建需求订单。
+- `PATCH /orders/{id}/status`：更新订单状态。
+
+订单状态流转：
+
+```text
+Pending -> Accepted
+Pending -> Cancelled
+Accepted -> Completed
+```
+
+资金规则：
+
+- 金额单位为分。
+- 创建订单时校验需求方余额，但不冻结资金。
+- `Pending -> Accepted` 时冻结需求方可用余额。
+- `Accepted -> Completed` 时扣减冻结余额，服务方入账，平台记录 10% 手续费。
+- 手续费使用整数除法向下取整。
+
+## 技术栈
+
+- Rust 2024
+- Axum
+- Tokio
+- SQLx
+- PostgreSQL
+
+## 项目结构
+
+```text
+src/
+├── common/              # 统一响应结构
+├── config.rs            # 运行期配置
+├── errors/              # 应用错误类型和响应转换
+├── modules/
+│   ├── orders/          # 订单模块
+│   │   ├── handler.rs   # HTTP 请求处理
+│   │   ├── service.rs   # 业务编排和事务
+│   │   ├── policy.rs    # 业务规则
+│   │   ├── repository.rs# 订单表访问
+│   │   └── model/       # DTO、实体和值类型
+│   └── users/           # 用户模型和用户表访问
+├── router/              # 总路由组合
+├── lib.rs
+└── main.rs
+```
 
 ## 本地运行
 
-1. 准备 Postgres 数据库，并在 `.env` 中配置连接字符串：
+### 1. 准备 PostgreSQL
+
+创建一个 PostgreSQL 数据库，例如：
+
+```bash
+createdb postgres_db
+```
+
+### 2. 配置环境变量
+
+在项目根目录创建 `.env`：
 
 ```env
+# 示例中：postgres:postgres 分别的代表用户名和密码
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres_db
 DATABASE_MAX_CONNECTIONS=5
 APP_HOST=127.0.0.1
@@ -14,39 +78,76 @@ APP_PORT=3000
 LOG_LEVEL=debug
 ```
 
-2. 初始化数据库表和测试数据：
+配置说明：
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | 是 | 无 | PostgreSQL 连接字符串 |
+| `DATABASE_MAX_CONNECTIONS` | 否 | `5` | 数据库连接池最大连接数 |
+| `APP_HOST` | 否 | `127.0.0.1` | HTTP 监听地址 |
+| `APP_PORT` | 否 | `3000` | HTTP 监听端口 |
+| `LOG_LEVEL` | 否 | `debug` | `trace`、`debug`、`info`、`warn`、`error` |
+
+### 3. 初始化数据库
 
 ```bash
 psql "$DATABASE_URL" -f db/init.sql
 ```
 
-Windows PowerShell 可使用：
+PowerShell：
 
 ```powershell
 psql $env:DATABASE_URL -f db/init.sql
 ```
 
-3. 启动服务：
+或直接复制 db/init.sql 文件中的内容粘贴到 PostgreSQL 中执行。
+
+初始化脚本会创建：
+
+- `users`
+- `orders`
+- `platform_fee_records`
+
+并插入示例用户和订单数据。
+
+### 4. 启动服务
 
 ```bash
 cargo run
 ```
 
-运行期配置集中在 `src/config.rs`：
+默认监听：
 
-- `DATABASE_URL`：必填，Postgres 连接字符串。
-- `DATABASE_MAX_CONNECTIONS`：可选，数据库连接池最大连接数，默认 `5`。
-- `APP_HOST`：可选，HTTP 服务监听地址，默认 `127.0.0.1`。
-- `APP_PORT`：可选，HTTP 服务监听端口，默认 `3000`。
-- `LOG_LEVEL`：可选，日志级别，默认 `debug`，支持 `trace`、`debug`、`info`、`warn`、`error`。
+```text
+http://127.0.0.1:3000
+```
 
-订单手续费、状态流转、角色校验属于业务规则，保留在订单业务层，不通过环境变量配置。
+### 5. 健康检查
 
-服务默认监听 `127.0.0.1:3000`。
+```bash
+curl http://127.0.0.1:3000/health
+```
 
-## API 示例
+## API
 
-创建需求订单：
+### 创建订单
+
+```http
+POST /orders
+```
+
+请求体：
+
+```json
+{
+  "client_id": 1,
+  "worker_id": 3,
+  "amount": 10000,
+  "description": "预约一次服务"
+}
+```
+
+示例：
 
 ```bash
 curl -X POST http://127.0.0.1:3000/orders \
@@ -54,7 +155,22 @@ curl -X POST http://127.0.0.1:3000/orders \
   -d '{"client_id":1,"worker_id":3,"amount":10000,"description":"预约一次服务"}'
 ```
 
-更新订单状态：
+### 更新订单状态
+
+```http
+PATCH /orders/{id}/status
+```
+
+请求体：
+
+```json
+{
+  "target_status": "Accepted",
+  "operator_id": 3
+}
+```
+
+接单：
 
 ```bash
 curl -X PATCH http://127.0.0.1:3000/orders/1/status \
@@ -62,23 +178,29 @@ curl -X PATCH http://127.0.0.1:3000/orders/1/status \
   -d '{"target_status":"Accepted","operator_id":3}'
 ```
 
+确认完成：
+
 ```bash
 curl -X PATCH http://127.0.0.1:3000/orders/1/status \
   -H "Content-Type: application/json" \
   -d '{"target_status":"Completed","operator_id":1}'
 ```
 
-## 核心规则
-
-- 创建订单会检查 Client 可用余额是否足够；余额不足不能创建，但创建时只生成 `Pending`，不冻结资金。
-- `Pending -> Accepted` 只能由订单指定 Worker 操作，并再次检查余额后冻结 Client 可用余额。
-- `Accepted -> Completed` 只能由订单 Client 操作，Worker 入账 `amount - amount / 10`，平台手续费记录入账 `amount / 10`。
-- 只有 `Pending` 可取消，`Accepted` 后不可取消。
-- 金额单位均为分，平台收费 10% 使用整数除法向下取整。
-
-## 验证
+取消订单：
 
 ```bash
-cargo test
-cargo check
+curl -X PATCH http://127.0.0.1:3000/orders/1/status \
+  -H "Content-Type: application/json" \
+  -d '{"target_status":"Cancelled","operator_id":1}'
 ```
+
+## 生产环境需要额外考虑
++ 创建订单规则过宽，只要余额足够就能创建任意订单，可能出现刷单、恶意指定服务方
++ 真实的认证授权，用户的 ID 等信息需要从后端获取，不能靠前端传入
++ 订单相关接口需要考虑幂等性，防止重复重建订单或重复结算
++ 接口需要做限流策略，防止恶意请求压垮服务
++ 数据库要使用迁移工具代替 init.sql 脚本或是使用额外的配置文件记录表结构的变化
++ 当前只更新余额和记录手续费，缺少可审计的账本，可以增加账本表，每次冻结、解冻、扣款、入账、手续费都写入双向流水
++ 需要考虑结算异常情况时的补偿机制
++ 预防并发与死锁问题
+
