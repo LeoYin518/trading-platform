@@ -2,6 +2,8 @@ DROP TABLE IF EXISTS platform_fee_records;
 DROP TABLE IF EXISTS orders;
 DROP TABLE IF EXISTS users;
 
+ALTER DATABASE postgres_db SET timezone TO 'Asia/Shanghai';
+
 CREATE TABLE users (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,

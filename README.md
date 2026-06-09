@@ -90,8 +90,16 @@ LOG_LEVEL=debug
 | `LOG_LEVEL` | 否 | `debug` | `trace`、`debug`、`info`、`warn`、`error` |
 
 ### 3. 初始化数据库
-#### 方案1：执行脚本
-执行 `db/init.sql` 文件脚本得到数据库表和样例数据
+#### 方案1：容器内执行 sql 脚本
++ 创建数据库
+```bash
+# 项目根目录下执行
+docker exec -it trading-postgres createdb -U postgres postgres_db
+# 拷贝脚本文件到容器
+docker cp .\db\init.sql trading-postgres:/tmp/init.sql
+# 执行脚本生成库表及样例数据
+docker exec -it trading-postgres psql -U postgres -d postgres_db -f /tmp/init.sql
+```
 
 #### 方案2：使用 SQLx 迁移（推荐）
 + 安装 sqlx-cli
@@ -118,7 +126,7 @@ sqlx migrate run
 - `platform_fee_records`
 - `_sqlx_migrations` (如果使用方案2，会自动创建该表)
 
-并插入示例用户和订单数据。
+并插入示例用户和订单数据(注意，请完成以上初始化数据库操作后再使用图形界面工具访问，否则时区显示有误)。
 
 ### 4. 启动服务
 
