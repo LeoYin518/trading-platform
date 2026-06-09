@@ -61,13 +61,14 @@ src/
 
 Docker  启动 PostgreSQL：
 ```bash
+# 终端执行
 docker run --name trading-postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
 ```
-用户名和密码默认为 `postgres`
+**用户名和密码默认为 `postgres`**
 
 ### 2. 配置环境变量
 
-在项目根目录创建 `.env`：
+在项目根目录创建 `.env`(复制 `.env.example` 内容然后修改即可)：
 
 ```env
 # 示例中：postgres:postgres 分别的代表用户名和密码
@@ -92,7 +93,7 @@ LOG_LEVEL=debug
 #### 方案1：执行脚本
 执行 `db/init.sql` 文件脚本得到数据库表和样例数据
 
-#### 方案2：使用 SQLx 迁移
+#### 方案2：使用 SQLx 迁移（推荐）
 + 安装 sqlx-cli
 ```bash
 cargo install sqlx-cli
@@ -100,11 +101,13 @@ cargo install sqlx-cli
 
 + 创建数据库
 ```bash
+# 项目根目录下执行
 sqlx database create
 ```
 
 + 执行迁移文件
 ```bash
+# 项目根目录下执行
 sqlx migrate run
 ```
 
@@ -113,13 +116,14 @@ sqlx migrate run
 - `users`
 - `orders`
 - `platform_fee_records`
-- `_sqlx_migrations`(如果执行迁移文件时，会自动创建该表)
+- `_sqlx_migrations` (如果使用方案2，会自动创建该表)
 
 并插入示例用户和订单数据。
 
 ### 4. 启动服务
 
 ```bash
+# 项目根目录下执行
 cargo run
 ```
 
