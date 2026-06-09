@@ -38,6 +38,8 @@ Accepted -> Completed
 ## 项目结构
 
 ```text
+db/                      # 数据库初始化脚本
+migrations/              # 迁移脚本
 src/
 ├── common/              # 统一响应结构
 ├── config.rs            # 运行期配置
@@ -59,7 +61,7 @@ src/
 
 ### 1. 准备 PostgreSQL
 
-Docker （推荐）
+Docker  启动 PostgreSQL：
 ```bash
 docker run --name trading-postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
 ```
@@ -89,24 +91,31 @@ LOG_LEVEL=debug
 | `LOG_LEVEL` | 否 | `debug` | `trace`、`debug`、`info`、`warn`、`error` |
 
 ### 3. 初始化数据库
+#### 方案1：执行脚本
+执行 `db/init.sql` 文件脚本得到数据库表和样例数据
 
+#### 方案2：使用 SQLx 迁移
++ 安装 sqlx-cli
 ```bash
-psql "$DATABASE_URL" -f db/init.sql
+cargo install sqlx-cli
 ```
 
-PowerShell：
-
-```powershell
-psql $env:DATABASE_URL -f db/init.sql
++ 创建数据库
+```bash
+sqlx database create
 ```
 
-或直接复制 db/init.sql 文件中的内容粘贴到 PostgreSQL 中执行。
++ 执行迁移文件
+```bash
+sqlx migrate run
+```
 
 初始化脚本会创建：
 
 - `users`
 - `orders`
 - `platform_fee_records`
+- `_sqlx_migrations`(如果执行迁移文件时，会自动创建该表)
 
 并插入示例用户和订单数据。
 
