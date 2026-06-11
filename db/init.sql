@@ -1,6 +1,8 @@
+DROP TABLE IF EXISTS account_ledger_entries;
 DROP TABLE IF EXISTS platform_fee_records;
 DROP TABLE IF EXISTS orders;
 DROP TABLE IF EXISTS users;
+DROP SEQUENCE IF EXISTS account_ledger_group_id_seq;
 
 ALTER DATABASE postgres_db SET timezone TO 'Asia/Shanghai';
 
@@ -71,6 +73,45 @@ COMMENT ON COLUMN platform_fee_records.id IS '平台手续费记录ID';
 COMMENT ON COLUMN platform_fee_records.order_id IS '来源订单ID';
 COMMENT ON COLUMN platform_fee_records.fee_amount IS '平台手续费金额，单位为分';
 COMMENT ON COLUMN platform_fee_records.created_at IS '创建时间';
+
+CREATE SEQUENCE account_ledger_group_id_seq;
+
+CREATE TABLE account_ledger_entries (
+    id BIGSERIAL PRIMARY KEY,
+    ledger_group_id BIGINT NOT NULL,
+    leg_no SMALLINT NOT NULL CHECK (leg_no IN (1, 2)),
+    order_id BIGINT NOT NULL REFERENCES orders(id),
+    user_id BIGINT NULL REFERENCES users(id),
+    operator_id BIGINT NOT NULL REFERENCES users(id),
+    account_type VARCHAR(32) NOT NULL CHECK (
+        account_type IN ('UserAvailable', 'UserFrozen', 'PlatformFee')
+    ),
+    direction VARCHAR(8) NOT NULL CHECK (direction IN ('In', 'Out')),
+    event_type VARCHAR(32) NOT NULL CHECK (
+        event_type IN ('Freeze', 'Unfreeze', 'SettleWorker', 'PlatformFee')
+    ),
+    amount BIGINT NOT NULL CHECK (amount >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (ledger_group_id, leg_no)
+);
+
+COMMENT ON SEQUENCE account_ledger_group_id_seq IS 'Groups the two ledger legs generated for one auditable fund movement';
+COMMENT ON TABLE account_ledger_entries IS 'Append-only double-entry account ledger for auditable order fund movements';
+COMMENT ON COLUMN account_ledger_entries.id IS 'Ledger entry ID';
+COMMENT ON COLUMN account_ledger_entries.ledger_group_id IS 'Shared ID for the two legs of one fund movement';
+COMMENT ON COLUMN account_ledger_entries.leg_no IS 'Leg number within the double-entry group';
+COMMENT ON COLUMN account_ledger_entries.order_id IS 'Source order ID';
+COMMENT ON COLUMN account_ledger_entries.user_id IS 'User account owner; NULL for platform account entries';
+COMMENT ON COLUMN account_ledger_entries.operator_id IS 'User who triggered the order transition';
+COMMENT ON COLUMN account_ledger_entries.account_type IS 'Account bucket affected by this ledger entry';
+COMMENT ON COLUMN account_ledger_entries.direction IS 'Entry direction: In or Out';
+COMMENT ON COLUMN account_ledger_entries.event_type IS 'Business event that produced this entry';
+COMMENT ON COLUMN account_ledger_entries.amount IS 'Amount in cents';
+COMMENT ON COLUMN account_ledger_entries.created_at IS 'Creation time';
+
+CREATE INDEX idx_account_ledger_entries_order_id ON account_ledger_entries(order_id);
+CREATE INDEX idx_account_ledger_entries_user_id ON account_ledger_entries(user_id);
+CREATE INDEX idx_account_ledger_entries_group_id ON account_ledger_entries(ledger_group_id);
 
 INSERT INTO users (id, name, role, balance, frozen_balance)
 VALUES

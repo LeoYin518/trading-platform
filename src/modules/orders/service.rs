@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::modules::ledger::repository as ledger_repository;
 use crate::modules::orders::model::dto::CreateOrderRequest;
 use crate::modules::orders::model::{Order, OrderStatus};
 use crate::modules::orders::{policy, repository};
@@ -72,6 +73,14 @@ impl OrderService {
                     order.amount,
                 )
                 .await?;
+                ledger_repository::insert_freeze_entries(
+                    &mut tx,
+                    order.id,
+                    order.client_id,
+                    operator_id,
+                    order.amount,
+                )
+                .await?;
             }
             (OrderStatus::Accepted, OrderStatus::Completed) => {
                 policy::ensure_client_operator(operator_id, order.client_id)?;
@@ -96,6 +105,23 @@ impl OrderService {
                 )
                 .await?;
                 repository::insert_platform_fee_record(&mut tx, order.id, order.fee_amount).await?;
+                ledger_repository::insert_worker_settlement_entries(
+                    &mut tx,
+                    order.id,
+                    order.client_id,
+                    order.worker_id,
+                    operator_id,
+                    order.worker_amount,
+                )
+                .await?;
+                ledger_repository::insert_platform_fee_entries(
+                    &mut tx,
+                    order.id,
+                    order.client_id,
+                    operator_id,
+                    order.fee_amount,
+                )
+                .await?;
             }
             (OrderStatus::Pending, OrderStatus::Cancelled) => {
                 policy::ensure_pending_cancel_operator(

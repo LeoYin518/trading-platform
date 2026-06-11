@@ -12,6 +12,17 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[derive(Debug, PartialEq, sqlx::FromRow)]
+struct LedgerEntryRow {
+    ledger_group_id: i64,
+    leg_no: i16,
+    user_id: Option<i64>,
+    account_type: String,
+    direction: String,
+    event_type: String,
+    amount: i64,
+}
+
 struct TestContext {
     pool: PgPool,
     service: OrderService,
@@ -82,6 +93,10 @@ impl TestContext {
 
     async fn cleanup(&self) -> Result<(), sqlx::Error> {
         for order_id in &self.order_ids {
+            sqlx::query("DELETE FROM account_ledger_entries WHERE order_id = $1")
+                .bind(order_id)
+                .execute(&self.pool)
+                .await?;
             sqlx::query("DELETE FROM platform_fee_records WHERE order_id = $1")
                 .bind(order_id)
                 .execute(&self.pool)
@@ -129,6 +144,27 @@ async fn user_balances(pool: &PgPool, user_id: i64) -> Result<(i64, i64), sqlx::
 
 async fn order_status(pool: &PgPool, order_id: i64) -> Result<String, sqlx::Error> {
     sqlx::query_scalar::<_, String>("SELECT status FROM orders WHERE id = $1")
+        .bind(order_id)
+        .fetch_one(pool)
+        .await
+}
+
+async fn ledger_entries(pool: &PgPool, order_id: i64) -> Result<Vec<LedgerEntryRow>, sqlx::Error> {
+    sqlx::query_as::<_, LedgerEntryRow>(
+        r#"
+        SELECT ledger_group_id, leg_no, user_id, account_type, direction, event_type, amount
+        FROM account_ledger_entries
+        WHERE order_id = $1
+        ORDER BY ledger_group_id, leg_no
+        "#,
+    )
+    .bind(order_id)
+    .fetch_all(pool)
+    .await
+}
+
+async fn ledger_entry_count(pool: &PgPool, order_id: i64) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM account_ledger_entries WHERE order_id = $1")
         .bind(order_id)
         .fetch_one(pool)
         .await
@@ -187,6 +223,32 @@ async fn accepting_order_freezes_client_available_balance() -> TestResult {
 
     assert_eq!(order_status(&ctx.pool, order_id).await?, "Accepted");
     assert_eq!(user_balances(&ctx.pool, client_id).await?, (9_000, 1_000));
+    let ledger_entries = ledger_entries(&ctx.pool, order_id).await?;
+    assert_eq!(ledger_entries.len(), 2);
+    let freeze_group = ledger_entries[0].ledger_group_id;
+    assert_eq!(
+        ledger_entries,
+        vec![
+            LedgerEntryRow {
+                ledger_group_id: freeze_group,
+                leg_no: 1,
+                user_id: Some(client_id),
+                account_type: "UserAvailable".to_string(),
+                direction: "Out".to_string(),
+                event_type: "Freeze".to_string(),
+                amount: 1_000,
+            },
+            LedgerEntryRow {
+                ledger_group_id: freeze_group,
+                leg_no: 2,
+                user_id: Some(client_id),
+                account_type: "UserFrozen".to_string(),
+                direction: "In".to_string(),
+                event_type: "Freeze".to_string(),
+                amount: 1_000,
+            },
+        ]
+    );
 
     ctx.cleanup().await?;
     Ok(())
@@ -223,6 +285,75 @@ async fn completing_order_settles_funds_and_records_platform_fee() -> TestResult
     .await?;
     assert_eq!(fee_amount, 100);
 
+    let ledger_entries = ledger_entries(&ctx.pool, order_id).await?;
+    assert_eq!(ledger_entries.len(), 6);
+
+    let freeze_group = ledger_entries[0].ledger_group_id;
+    let settle_group = ledger_entries[2].ledger_group_id;
+    let platform_fee_group = ledger_entries[4].ledger_group_id;
+    assert_ne!(freeze_group, settle_group);
+    assert_ne!(settle_group, platform_fee_group);
+
+    assert_eq!(
+        ledger_entries,
+        vec![
+            LedgerEntryRow {
+                ledger_group_id: freeze_group,
+                leg_no: 1,
+                user_id: Some(client_id),
+                account_type: "UserAvailable".to_string(),
+                direction: "Out".to_string(),
+                event_type: "Freeze".to_string(),
+                amount: 1_000,
+            },
+            LedgerEntryRow {
+                ledger_group_id: freeze_group,
+                leg_no: 2,
+                user_id: Some(client_id),
+                account_type: "UserFrozen".to_string(),
+                direction: "In".to_string(),
+                event_type: "Freeze".to_string(),
+                amount: 1_000,
+            },
+            LedgerEntryRow {
+                ledger_group_id: settle_group,
+                leg_no: 1,
+                user_id: Some(client_id),
+                account_type: "UserFrozen".to_string(),
+                direction: "Out".to_string(),
+                event_type: "SettleWorker".to_string(),
+                amount: 900,
+            },
+            LedgerEntryRow {
+                ledger_group_id: settle_group,
+                leg_no: 2,
+                user_id: Some(worker_id),
+                account_type: "UserAvailable".to_string(),
+                direction: "In".to_string(),
+                event_type: "SettleWorker".to_string(),
+                amount: 900,
+            },
+            LedgerEntryRow {
+                ledger_group_id: platform_fee_group,
+                leg_no: 1,
+                user_id: Some(client_id),
+                account_type: "UserFrozen".to_string(),
+                direction: "Out".to_string(),
+                event_type: "PlatformFee".to_string(),
+                amount: 100,
+            },
+            LedgerEntryRow {
+                ledger_group_id: platform_fee_group,
+                leg_no: 2,
+                user_id: None,
+                account_type: "PlatformFee".to_string(),
+                direction: "In".to_string(),
+                event_type: "PlatformFee".to_string(),
+                amount: 100,
+            },
+        ]
+    );
+
     ctx.cleanup().await?;
     Ok(())
 }
@@ -246,6 +377,7 @@ async fn cancelling_pending_order_does_not_move_funds() -> TestResult {
     assert_eq!(order_status(&ctx.pool, order_id).await?, "Cancelled");
     assert_eq!(user_balances(&ctx.pool, client_id).await?, (10_000, 0));
     assert_eq!(user_balances(&ctx.pool, worker_id).await?, (0, 0));
+    assert_eq!(ledger_entry_count(&ctx.pool, order_id).await?, 0);
 
     ctx.cleanup().await?;
     Ok(())
@@ -271,6 +403,7 @@ async fn invalid_target_status_is_rejected_without_database_changes() -> TestRes
     assert!(matches!(error, AppError::BadRequest(_)));
     assert_eq!(order_status(&ctx.pool, order_id).await?, "Pending");
     assert_eq!(user_balances(&ctx.pool, client_id).await?, (10_000, 0));
+    assert_eq!(ledger_entry_count(&ctx.pool, order_id).await?, 0);
 
     ctx.cleanup().await?;
     Ok(())
@@ -296,6 +429,7 @@ async fn invalid_status_transition_does_not_move_funds() -> TestResult {
     assert!(matches!(error, AppError::Conflict(_)));
     assert_eq!(order_status(&ctx.pool, order_id).await?, "Accepted");
     assert_eq!(user_balances(&ctx.pool, client_id).await?, (10_000, 0));
+    assert_eq!(ledger_entry_count(&ctx.pool, order_id).await?, 0);
 
     ctx.cleanup().await?;
     Ok(())
@@ -321,6 +455,7 @@ async fn insufficient_balance_cannot_accept_order() -> TestResult {
     assert!(matches!(error, AppError::Conflict(_)));
     assert_eq!(order_status(&ctx.pool, order_id).await?, "Pending");
     assert_eq!(user_balances(&ctx.pool, client_id).await?, (500, 0));
+    assert_eq!(ledger_entry_count(&ctx.pool, order_id).await?, 0);
 
     ctx.cleanup().await?;
     Ok(())
@@ -346,6 +481,7 @@ async fn only_assigned_worker_can_accept_order() -> TestResult {
         .unwrap_err();
     assert!(matches!(error, AppError::Forbidden(_)));
     assert_eq!(order_status(&ctx.pool, order_id).await?, "Pending");
+    assert_eq!(ledger_entry_count(&ctx.pool, order_id).await?, 0);
 
     ctx.cleanup().await?;
     Ok(())
@@ -366,6 +502,8 @@ async fn only_client_can_complete_order() -> TestResult {
     ctx.service
         .update_order_status(order_id, "Accepted".to_string(), worker_id)
         .await?;
+    assert_eq!(ledger_entry_count(&ctx.pool, order_id).await?, 2);
+
     let error = ctx
         .service
         .update_order_status(order_id, "Completed".to_string(), worker_id)
@@ -374,6 +512,7 @@ async fn only_client_can_complete_order() -> TestResult {
     assert!(matches!(error, AppError::Forbidden(_)));
     assert_eq!(order_status(&ctx.pool, order_id).await?, "Accepted");
     assert_eq!(user_balances(&ctx.pool, client_id).await?, (9_000, 1_000));
+    assert_eq!(ledger_entry_count(&ctx.pool, order_id).await?, 2);
 
     ctx.cleanup().await?;
     Ok(())
